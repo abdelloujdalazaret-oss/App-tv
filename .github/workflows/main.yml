@@ -17,6 +17,17 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Extraire le projet depuis le zip
+        run: |
+          ZIP=$(ls *.zip 2>/dev/null | head -1)
+          if [ -z "$ZIP" ]; then echo "Aucun fichier .zip trouvé à la racine"; exit 1; fi
+          rm -rf lib test assets android pubspec.yaml pubspec.lock
+          unzip -q -o "$ZIP" -d _x
+          P=$(dirname "$(find _x -name pubspec.yaml | head -1)")
+          cp -r "$P"/. .
+          rm -rf _x
+          ls
+
       - name: Créer le projet Android
         run: flutter create --platforms=android --org com.playerflow --project-name player_flow .
 
@@ -74,26 +85,12 @@ jobs:
           EOF
           G=android/app/build.gradle
           [ -f android/app/build.gradle.kts ] && G=android/app/build.gradle.kts
-          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 21/; s/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/' "$G"
-
-      - name: Préparer les assets manquants
-        run: |
-          command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
-          mkdir -p assets/images assets/sounds
-          if [ ! -f assets/images/logo.png ]; then
-            ffmpeg -y -f lavfi -i "color=c=0x14B8A6:s=1024x1024" -frames:v 1 assets/images/logo.png
-          fi
-          if [ ! -f assets/images/logo_foreground.png ]; then
-            ffmpeg -y -i assets/images/logo.png -vf "scale=700:700,format=rgba,pad=1024:1024:162:162:color=0x00000000" -frames:v 1 assets/images/logo_foreground.png
-          fi
-          if [ ! -f assets/sounds/intro.mp3 ]; then
-            ffmpeg -y -f lavfi -i "sine=frequency=660:duration=1" -q:a 5 assets/sounds/intro.mp3
-          fi
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/; s/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' "$G"
 
       - run: flutter pub get
       - run: dart run flutter_launcher_icons
       - run: dart run flutter_native_splash:create
-      - run: flutter build apk --release
+      - run: flutter build apk --release --no-shrink
 
       - uses: actions/upload-artifact@v4
         with:
