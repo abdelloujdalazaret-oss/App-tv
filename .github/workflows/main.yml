@@ -76,6 +76,19 @@ jobs:
           [ -f android/app/build.gradle.kts ] && G=android/app/build.gradle.kts
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 21/; s/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/' "$G"
 
+      - name: Préparer les assets manquants
+        run: |
+          mkdir -p assets/images assets/sounds
+          if [ ! -f assets/images/logo.png ]; then
+            convert -size 1024x1024 xc:'#14B8A6' assets/images/logo.png
+          fi
+          if [ ! -f assets/images/logo_foreground.png ]; then
+            convert assets/images/logo.png -resize 700x700 -background none -gravity center -extent 1024x1024 assets/images/logo_foreground.png
+          fi
+          if [ ! -f assets/sounds/intro.mp3 ]; then
+            ffmpeg -y -f lavfi -i "sine=frequency=660:duration=1" -q:a 5 assets/sounds/intro.mp3
+          fi
+
       - run: flutter pub get
       - run: dart run flutter_launcher_icons
       - run: dart run flutter_native_splash:create
@@ -84,4 +97,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: player-flow-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: build/app/outputs/flutter-apk/app-release.apksion 21/' "$G"
+
