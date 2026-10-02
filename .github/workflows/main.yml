@@ -78,12 +78,13 @@ jobs:
 
       - name: Préparer les assets manquants
         run: |
+          command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
           mkdir -p assets/images assets/sounds
           if [ ! -f assets/images/logo.png ]; then
-            convert -size 1024x1024 xc:'#14B8A6' assets/images/logo.png
+            ffmpeg -y -f lavfi -i "color=c=0x14B8A6:s=1024x1024" -frames:v 1 assets/images/logo.png
           fi
           if [ ! -f assets/images/logo_foreground.png ]; then
-            convert assets/images/logo.png -resize 700x700 -background none -gravity center -extent 1024x1024 assets/images/logo_foreground.png
+            ffmpeg -y -i assets/images/logo.png -vf "scale=700:700,format=rgba,pad=1024:1024:162:162:color=0x00000000" -frames:v 1 assets/images/logo_foreground.png
           fi
           if [ ! -f assets/sounds/intro.mp3 ]; then
             ffmpeg -y -f lavfi -i "sine=frequency=660:duration=1" -q:a 5 assets/sounds/intro.mp3
@@ -97,5 +98,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: player-flow-apk
-          path: build/app/outputs/flutter-apk/app-release.apksion 21/' "$G"
-
+          path: build/app/outputs/flutter-apk/app-release.apk
