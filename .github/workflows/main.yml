@@ -3,6 +3,8 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -17,82 +19,477 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Extraire le projet depuis le zip
+      - name: Creer le projet
         run: |
-          ZIP=$(ls *.zip 2>/dev/null | head -1)
-          if [ -z "$ZIP" ]; then echo "Aucun fichier .zip trouvé à la racine"; exit 1; fi
-          rm -rf lib test assets android pubspec.yaml pubspec.lock
-          unzip -q -o "$ZIP" -d _x
-          P=$(dirname "$(find _x -name pubspec.yaml | head -1)")
-          cp -r "$P"/. .
-          rm -rf _x
-          ls
+          rm -rf lib test android ios pubspec.yaml pubspec.lock .dart_tool
+          flutter create --platforms=android --org com.playerflow --project-name player_flow .
+          rm -rf test
+          sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET" />\n    <application android:usesCleartextTraffic="true"#' android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:label="[^"]*"/android:label="Player Flow"/' android/app/src/main/AndroidManifest.xml
 
-      - name: Créer le projet Android
-        run: flutter create --platforms=android --org com.playerflow --project-name player_flow .
-
-      - name: Configuration Android
+      - name: Logo
         run: |
-          mkdir -p android/app/src/main/res/xml
-          cat > android/app/src/main/res/xml/network_security_config.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <network-security-config>
-            <base-config cleartextTrafficPermitted="true">
-              <trust-anchors>
-                <certificates src="system" />
-                <certificates src="user" />
-              </trust-anchors>
-            </base-config>
-          </network-security-config>
-          EOF
-          cat > android/app/src/main/AndroidManifest.xml <<'EOF'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-            <uses-permission android:name="android.permission.INTERNET" />
-            <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-            <uses-permission android:name="android.permission.WAKE_LOCK" />
-            <uses-feature android:name="android.software.leanback" android:required="false" />
-            <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-            <application
-              android:label="Player Flow"
-              android:name="${applicationName}"
-              android:icon="@mipmap/ic_launcher"
-              android:usesCleartextTraffic="true"
-              android:networkSecurityConfig="@xml/network_security_config"
-              android:allowBackup="false">
-              <activity
-                android:name=".MainActivity"
-                android:exported="true"
-                android:launchMode="singleTop"
-                android:theme="@style/LaunchTheme"
-                android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-                android:hardwareAccelerated="true"
-                android:supportsPictureInPicture="true"
-                android:windowSoftInputMode="adjustResize">
-                <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme" />
-                <intent-filter>
-                  <action android:name="android.intent.action.MAIN" />
-                  <category android:name="android.intent.category.LAUNCHER" />
-                  <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
-                </intent-filter>
-              </activity>
-              <meta-data android:name="flutterEmbedding" android:value="2" />
-            </application>
-            <queries>
-              <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent>
-              <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="mailto" /></intent>
-            </queries>
-          </manifest>
-          EOF
-          G=android/app/build.gradle
-          [ -f android/app/build.gradle.kts ] && G=android/app/build.gradle.kts
-          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/; s/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' "$G"
+          command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          mkdir -p assets
+          if [ -f logo.png ]; then cp logo.png assets/logo.png; fi
+          if [ ! -f assets/logo.png ] && [ -f assets/images/logo.png ]; then cp assets/images/logo.png assets/logo.png; fi
+          if [ ! -f assets/logo.png ]; then ffmpeg -y -f lavfi -i "color=c=0x14B8A6:s=1024x1024" -frames:v 1 assets/logo.png; fi
+          ffmpeg -y -i assets/logo.png -vf "scale=700:700,format=rgba,pad=1024:1024:162:162:color=0x00000000" -frames:v 1 assets/logo_fg.png
 
-      - run: flutter pub get
-      - run: dart run flutter_launcher_icons
-      - run: dart run flutter_native_splash:create
-      - run: flutter build apk --release --no-shrink
+      - name: Ecrire le code
+        run: |
+          cat > pubspec.yaml <<'EOF'
+          name: player_flow
+          description: Player Flow - lecteur IPTV
+          publish_to: 'none'
+          version: 1.0.0+1
+          environment:
+            sdk: '>=3.3.0'
+          dependencies:
+            flutter:
+              sdk: flutter
+            video_player: ^2.9.2
+            shared_preferences: ^2.3.2
+            http: ^1.2.2
+          dev_dependencies:
+            flutter_launcher_icons: ^0.14.1
+          flutter:
+            uses-material-design: true
+            assets:
+              - assets/logo.png
+          flutter_launcher_icons:
+            android: true
+            ios: false
+            image_path: assets/logo.png
+            adaptive_icon_background: "#040A18"
+            adaptive_icon_foreground: assets/logo_fg.png
+            min_sdk_android: 21
+          EOF
+          mkdir -p lib
+          cat > lib/main.dart <<'EOF'
+          import 'dart:async';
+          import 'dart:convert';
+          import 'package:flutter/foundation.dart';
+          import 'package:flutter/material.dart';
+          import 'package:flutter/services.dart';
+          import 'package:http/http.dart' as http;
+          import 'package:shared_preferences/shared_preferences.dart';
+          import 'package:video_player/video_player.dart';
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: player-flow-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          const kAccent = Color(0xFF14B8A6);
+          const kBg = Color(0xFF0E131C);
+          const kField = Color(0xFF182131);
+          const kUA = 'VLC/3.0.18 LibVLC/3.0.18';
+          const kHint = 'Votre opérateur peut bloquer ce serveur. Essayez un DNS sécurisé, un proxy ou un VPN.';
+
+          void main() {
+            WidgetsFlutterBinding.ensureInitialized();
+            runApp(const PlayerFlowApp());
+          }
+
+          class Ch {
+            const Ch(this.name, this.url, this.group, this.logo);
+            final String name, url, group;
+            final String? logo;
+            int get kind => url.contains('/movie/') ? 1 : (url.contains('/series/') ? 2 : 0);
+          }
+
+          class Sub {
+            Sub(this.name, this.url);
+            final String name, url;
+            Map<String, String> toJson() => {'name': name, 'url': url};
+            factory Sub.fromJson(Map<String, dynamic> j) => Sub('${j['name']}', '${j['url']}');
+          }
+
+          List<Ch> parseM3u(String raw) {
+            final text = raw.startsWith('\uFEFF') ? raw.substring(1) : raw;
+            final out = <Ch>[];
+            final attr = RegExp(r'([\w-]+)="([^"]*)"');
+            const def = 'Sans catégorie';
+            String name = '';
+            String group = def;
+            String? logo;
+            for (final l in text.split(RegExp(r'\r?\n'))) {
+              final line = l.trim();
+              if (line.isEmpty) continue;
+              if (line.startsWith('#EXTINF')) {
+                var end = 0;
+                final a = <String, String>{};
+                for (final m in attr.allMatches(line)) {
+                  a[m.group(1)!.toLowerCase()] = m.group(2)!;
+                  end = m.end;
+                }
+                final c = line.indexOf(',', end);
+                name = c >= 0 ? line.substring(c + 1).trim() : (a['tvg-name'] ?? '');
+                final g = (a['group-title'] ?? '').trim();
+                group = g.isEmpty ? def : g;
+                logo = a['tvg-logo'];
+              } else if (line.startsWith('#EXTGRP:')) {
+                if (group == def) group = line.substring(8).trim();
+              } else if (line.startsWith('#')) {
+                continue;
+              } else if (line.contains('://')) {
+                out.add(Ch(name.isEmpty ? 'Sans nom' : name, line, group, (logo == null || logo.isEmpty) ? null : logo));
+                name = '';
+                group = def;
+                logo = null;
+              }
+            }
+            return out;
+          }
+
+          class Store {
+            static Future<List<Sub>> subs() async {
+              final p = await SharedPreferences.getInstance();
+              return (p.getStringList('subs') ?? []).map((e) => Sub.fromJson(jsonDecode(e) as Map<String, dynamic>)).toList();
+            }
+
+            static Future<void> saveSubs(List<Sub> l) async {
+              final p = await SharedPreferences.getInstance();
+              await p.setStringList('subs', l.map((e) => jsonEncode(e.toJson())).toList());
+            }
+
+            static Future<int> active() async {
+              final p = await SharedPreferences.getInstance();
+              return p.getInt('active') ?? 0;
+            }
+
+            static Future<void> setActive(int i) async {
+              final p = await SharedPreferences.getInstance();
+              await p.setInt('active', i);
+            }
+
+            static Future<Set<String>> favs() async {
+              final p = await SharedPreferences.getInstance();
+              return (p.getStringList('favs') ?? []).toSet();
+            }
+
+            static Future<void> saveFavs(Set<String> s) async {
+              final p = await SharedPreferences.getInstance();
+              await p.setStringList('favs', s.toList());
+            }
+          }
+
+          class PlayerFlowApp extends StatelessWidget {
+            const PlayerFlowApp({super.key});
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                title: 'Player Flow',
+                debugShowCheckedModeBanner: false,
+                theme: ThemeData(
+                  useMaterial3: true,
+                  colorScheme: ColorScheme.fromSeed(seedColor: kAccent, brightness: Brightness.dark),
+                  scaffoldBackgroundColor: kBg,
+                  appBarTheme: const AppBarTheme(backgroundColor: kBg),
+                  inputDecorationTheme: InputDecorationTheme(
+                    filled: true,
+                    fillColor: kField,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  ),
+                ),
+                home: const Intro(),
+              );
+            }
+          }
+
+          // ---------------------------------------------------------------- INTRO
+          class Intro extends StatefulWidget {
+            const Intro({super.key});
+            @override
+            State<Intro> createState() => _IntroState();
+          }
+
+          class _IntroState extends State<Intro> with SingleTickerProviderStateMixin {
+            late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1300))..forward();
+
+            @override
+            void initState() {
+              super.initState();
+              _go();
+            }
+
+            Future<void> _go() async {
+              await Future.delayed(const Duration(milliseconds: 2500));
+              final subs = await Store.subs();
+              if (!mounted) return;
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (_) => subs.isEmpty ? const AddSub(first: true) : const Home()),
+              );
+            }
+
+            @override
+            void dispose() {
+              _c.dispose();
+              super.dispose();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: Center(
+                  child: FadeTransition(
+                    opacity: _c,
+                    child: ScaleTransition(
+                      scale: Tween<double>(begin: .7, end: 1).animate(CurvedAnimation(parent: _c, curve: Curves.easeOutBack)),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(28),
+                          child: Image.asset('assets/logo.png', width: 160, height: 160,
+                              errorBuilder: (_, __, ___) => const Icon(Icons.live_tv, size: 120, color: kAccent)),
+                        ),
+                        const SizedBox(height: 20),
+                        const Text('Player Flow', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700)),
+                      ]),
+                    ),
+                  ),
+                ),
+              );
+            }
+          }
+
+          // ---------------------------------------------------------------- AJOUT
+          class AddSub extends StatefulWidget {
+            const AddSub({super.key, this.first = false});
+            final bool first;
+            @override
+            State<AddSub> createState() => _AddSubState();
+          }
+
+          class _AddSubState extends State<AddSub> {
+            int mode = 0;
+            final name = TextEditingController();
+            final url = TextEditingController();
+            final server = TextEditingController();
+            final user = TextEditingController();
+            final pass = TextEditingController();
+            bool busy = false, failed = false;
+            String? msg;
+
+            @override
+            void dispose() {
+              for (final c in [name, url, server, user, pass]) {
+                c.dispose();
+              }
+              super.dispose();
+            }
+
+            String _build() {
+              if (mode == 0) return url.text.trim();
+              var s = server.text.trim();
+              if (!s.startsWith('http')) s = 'http://$s';
+              while (s.endsWith('/')) {
+                s = s.substring(0, s.length - 1);
+              }
+              final u = Uri.encodeComponent(user.text.trim());
+              final p = Uri.encodeComponent(pass.text.trim());
+              return '$s/get.php?username=$u&password=$p&type=m3u_plus&output=ts';
+            }
+
+            Future<void> _paste(TextEditingController c) async {
+              final d = await Clipboard.getData('text/plain');
+              if (d?.text != null) setState(() => c.text = d!.text!.trim());
+            }
+
+            Future<bool> _test(String u) async {
+              try {
+                final r = await http.get(Uri.parse(u), headers: {'User-Agent': kUA}).timeout(const Duration(seconds: 40));
+                return r.statusCode < 400 && r.body.contains('://');
+              } catch (_) {
+                return false;
+              }
+            }
+
+            Future<void> _save({bool force = false}) async {
+              final u = _build();
+              final bad = mode == 0
+                  ? !u.startsWith('http')
+                  : (server.text.trim().isEmpty || user.text.trim().isEmpty || pass.text.trim().isEmpty);
+              if (bad) {
+                setState(() => msg = 'Veuillez remplir les champs correctement.');
+                return;
+              }
+              setState(() {
+                busy = true;
+                msg = null;
+              });
+              if (!force && !await _test(u)) {
+                if (!mounted) return;
+                setState(() {
+                  busy = false;
+                  failed = true;
+                  msg = 'Connexion échouée. $kHint';
+                });
+                return;
+              }
+              final subs = await Store.subs();
+              final nm = name.text.trim().isEmpty ? (Uri.tryParse(u)?.host ?? 'Abonnement') : name.text.trim();
+              subs.add(Sub(nm, u));
+              await Store.saveSubs(subs);
+              await Store.setActive(subs.length - 1);
+              if (!mounted) return;
+              Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const Home()), (r) => false);
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(title: const Text('Ajouter un abonnement')),
+                body: ListView(padding: const EdgeInsets.all(16), children: [
+                  SegmentedButton<int>(
+                    segments: const [
+                      ButtonSegment(value: 0, label: Text('Lien M3U')),
+                      ButtonSegment(value: 1, label: Text('Xtream Codes')),
+                    ],
+                    selected: {mode},
+                    onSelectionChanged: (s) => setState(() {
+                      mode = s.first;
+                      msg = null;
+                      failed = false;
+                    }),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(controller: name, decoration: const InputDecoration(labelText: 'Nom (facultatif)')),
+                  const SizedBox(height: 12),
+                  if (mode == 0)
+                    TextField(
+                      controller: url,
+                      keyboardType: TextInputType.url,
+                      decoration: InputDecoration(
+                        labelText: 'Lien M3U',
+                        suffixIcon: TextButton(onPressed: () => _paste(url), child: const Text('Coller')),
+                      ),
+                    )
+                  else ...[
+                    TextField(
+                      controller: server,
+                      keyboardType: TextInputType.url,
+                      decoration: InputDecoration(
+                        labelText: 'Serveur (ex : http://exemple.com:8080)',
+                        suffixIcon: TextButton(onPressed: () => _paste(server), child: const Text('Coller')),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(controller: user, decoration: const InputDecoration(labelText: 'Identifiant')),
+                    const SizedBox(height: 12),
+                    TextField(controller: pass, obscureText: true, decoration: const InputDecoration(labelText: 'Mot de passe')),
+                  ],
+                  const SizedBox(height: 16),
+                  if (msg != null)
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(color: Colors.redAccent.withAlpha(40), borderRadius: BorderRadius.circular(12)),
+                      child: Text(msg!),
+                    ),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    onPressed: busy ? null : () => _save(),
+                    child: busy
+                        ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Text('Tester et enregistrer'),
+                  ),
+                  if (failed) ...[
+                    const SizedBox(height: 8),
+                    OutlinedButton(onPressed: busy ? null : () => _save(force: true), child: const Text('Enregistrer quand même')),
+                  ],
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Player Flow ne fournit aucun contenu ni abonnement. Ajoutez uniquement vos propres sources légales.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
+                ]),
+              );
+            }
+          }
+
+          // ---------------------------------------------------------------- ACCUEIL
+          class Home extends StatefulWidget {
+            const Home({super.key});
+            @override
+            State<Home> createState() => _HomeState();
+          }
+
+          class _HomeState extends State<Home> {
+            List<Sub> subs = [];
+            int active = 0;
+            List<Ch> all = [];
+            Set<String> favs = {};
+            bool loading = true, grid = false;
+            String? error;
+            int kind = 0;
+            String cat = 'all', q = '';
+            Timer? _deb;
+            final _search = TextEditingController();
+
+            @override
+            void initState() {
+              super.initState();
+              _init();
+            }
+
+            @override
+            void dispose() {
+              _deb?.cancel();
+              _search.dispose();
+              super.dispose();
+            }
+
+            Future<void> _init() async {
+              subs = await Store.subs();
+              active = await Store.active();
+              favs = await Store.favs();
+              if (subs.isEmpty) {
+                if (mounted) {
+                  Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const AddSub(first: true)));
+                }
+                return;
+              }
+              if (active >= subs.length) active = 0;
+              await _load();
+            }
+
+            Future<void> _load() async {
+              setState(() {
+                loading = true;
+                error = null;
+              });
+              try {
+                final r = await http.get(Uri.parse(subs[active].url), headers: {'User-Agent': kUA}).timeout(const Duration(seconds: 90));
+                if (r.statusCode >= 400) throw 'HTTP ${r.statusCode}';
+                final list = await compute(parseM3u, utf8.decode(r.bodyBytes, allowMalformed: true));
+                if (list.isEmpty) throw 'liste vide';
+                all = list;
+              } catch (e) {
+                error = 'Échec du chargement ($e).\n$kHint';
+              }
+              if (mounted) setState(() => loading = false);
+            }
+
+            Future<void> _menu(String v) async {
+              if (v.startsWith('s')) {
+                active = int.parse(v.substring(1));
+                await Store.setActive(active);
+                cat = 'all';
+                await _load();
+              } else if (v == 'add') {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const AddSub()));
+              } else if (v == 'del') {
+                subs.removeAt(active);
+                await Store.saveSubs(subs);
+                if (!mounted) return;
+                if (subs.isEmpty) {
+                  Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const AddSub(first: true)));
+                  return;
+                }
+                active = 0;
+                await Store.setActive(0);
+                cat = 'all';
+                await _load();
+              } else {
+                showDialog<void>(
+                  context: context,
+                  builder: (_) => const AlertDialog(
+                    title: Text('Player Flow 1.0'),
+         
